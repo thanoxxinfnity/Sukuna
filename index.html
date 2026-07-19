@@ -276,7 +276,7 @@
   <div id="settings">
     <h2>⚙ SETTINGS</h2>
     <label>Groq API Key (<a href="https://console.groq.com/keys" target="_blank" rel="noopener">get one free</a>)</label>
-    <input type="password" id="keyInput" placeholder="gsk_...">
+    <input type="password" id="keyInput" placeholder="gsk_... (empty = built-in key)">
     <label>Model</label>
     <input type="text" id="modelInput" placeholder="llama-3.3-70b-versatile">
     <label>🧠 Long-term memory (auto-updated)</label>
@@ -300,6 +300,9 @@
   };
   const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
   const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+  // Owner's built-in key — everyone using this app chats through this key.
+  // Users can still override it with their own key in ⚙ settings.
+  const DEFAULT_API_KEY = '';
   const RECENT_WINDOW = 20;      // raw messages sent to the model
   const MEMORY_EVERY = 10;       // distill memory every N new messages
 
@@ -381,8 +384,12 @@
   }
 
   // ---------- Groq call ----------
+  function activeKey() {
+    return (localStorage.getItem(LS.key) || '').trim() || DEFAULT_API_KEY;
+  }
+
   async function groqChat(messages, stream, onDelta) {
-    const key = localStorage.getItem(LS.key) || '';
+    const key = activeKey();
     const model = localStorage.getItem(LS.model) || DEFAULT_MODEL;
     const res = await fetch(API_URL, {
       method: 'POST',
@@ -446,7 +453,7 @@
   async function send() {
     const text = msgEl.value.trim();
     if (!text || busy) return;
-    if (!(localStorage.getItem(LS.key) || '').trim()) {
+    if (!activeKey()) {
       openSettings();
       alert('Pehle Groq API key daalo bhai — settings me (free hai: console.groq.com/keys)');
       return;
