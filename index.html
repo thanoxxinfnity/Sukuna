@@ -388,8 +388,16 @@
     oldMemCount: 'sukuna_memory_msgcount'
   };
   const TEXT_MODEL = 'llama-3.3-70b-versatile';
-  const VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+  const TEXT_FALLBACKS = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.1-8b-instant'];
+  // Groq rotates models over time — discover a live vision model at runtime
+  const VISION_PATTERNS = [/llama-4-maverick/i, /llama-4-scout/i, /qwen.*vl/i, /^qwen\//i, /llava/i, /vision/i];
+  const VISION_CANDIDATES = [
+    'meta-llama/llama-4-maverick-17b-128e-instruct',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'qwen/qwen3.6-27b'
+  ];
   const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+  const MODELS_URL = 'https://api.groq.com/openai/v1/models';
   const DEFAULT_API_KEY = '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';
   const RECENT_WINDOW = 20;   // raw messages sent to the model
   const MEMORY_EVERY = 10;    // distill memory every N new messages
@@ -411,6 +419,30 @@
   let memory = localStorage.getItem(LS.memory) || '';
   let pendingImage = null;   // dataURL of image waiting to be sent
   let busy = false;
+
+  // ---------- model discovery ----------
+  let modelList = [];
+  function pickVisionModel(exclude) {
+    const ex = exclude || [];
+    if (modelList.length) {
+      for (const pat of VISION_PATTERNS) {
+        const found = modelList.find(id => pat.test(id) && !ex.includes(id) && !/whisper|tts|guard/i.test(id));
+        if (found) return found;
+      }
+    }
+    return VISION_CANDIDATES.find(c => !ex.includes(c)) || null;
+  }
+  function pickTextModel(exclude) {
+    const ex = exclude || [];
+    const pool = modelList.length ? TEXT_FALLBACKS.filter(m => modelList.includes(m)) : TEXT_FALLBACKS;
+    return pool.find(m => !ex.includes(m)) || TEXT_FALLBACKS.find(m => !ex.includes(m)) || null;
+  }
+  (async () => {
+    try {
+      const r = await fetch(MODELS_URL, { headers: { 'Authorization': 'Bearer ' + DEFAULT_API_KEY } });
+      if (r.ok) modelList = ((await r.json()).data || []).map(m => m.id);
+    } catch {}
+  })();
 
   // ---------- conversations store ----------
   let convos = [];
@@ -675,7 +707,7 @@
       const updated = await groqChat([
         { role: 'system', content: 'You maintain a long-term memory file for a roleplay AI. Merge the existing memory with new facts from the conversation. Keep ONLY durable, useful facts: the user\'s name, language, preferences, personal details, running jokes, promises, and key events. Output a compact bullet list, max 20 bullets, no commentary.' },
         { role: 'user', content: 'EXISTING MEMORY:\n' + (memory || '(empty)') + '\n\nNEW CONVERSATION:\n' + recent + '\n\nOutput the updated memory bullets only.' }
-      ], TEXT_MODEL, false, null);
+      ], pickTextModel([]) || TEXT_MODEL, false, null);
       if (updated && updated.trim()) {
         memory = updated.trim();
         localStorage.setItem(LS.memory, memory);
@@ -707,11 +739,26 @@
     bubble.innerHTML = '<span class="thinking"><span>.</span><span>.</span><span>.</span></span>';
 
     try {
-      const model = image ? VISION_MODEL : TEXT_MODEL;
-      const reply = await groqChat(buildApiMessages(c, !!image), model, true, partial => {
-        setBubbleText(bubble, partial);
-        chatEl.scrollTop = chatEl.scrollHeight;
-      });
+      // try models until one works — Groq deprecates/rotates model ids over time
+      let reply = null;
+      const tried = [];
+      for (;;) {
+        const model = image ? pickVisionModel(tried) : pickTextModel(tried);
+        if (!model) throw new Error(image
+          ? 'Is waqt Groq pe koi vision model available nahi hai — thodi der baad try karo.'
+          : 'Is waqt Groq pe koi text model available nahi hai — thodi der baad try karo.');
+        try {
+          reply = await groqChat(buildApiMessages(c, !!image), model, true, partial => {
+            setBubbleText(bubble, partial);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          });
+          break;
+        } catch (err) {
+          const modelGone = /does not exist|do not have access|not found|decommission|deprecat/i.test(err.message);
+          if (modelGone && tried.length < 8) { tried.push(model); continue; }
+          throw err;
+        }
+      }
       const finalText = reply || '*stares in silent contempt* ⛩️';
       setBubbleText(bubble, finalText);
       c.messages.push({ role: 'assistant', content: finalText });
