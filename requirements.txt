@@ -1,0 +1,22 @@
+# Sukuna AI - Python Dependencies
+
+# Web Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+
+# HTTP Requests
+requests==2.31.0
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Optional: Async support
+aiohttp==3.9.0
+
+# Optional: Advanced TTS (if using local TTS models)
+# torch==2.0.0
+# torchaudio==2.0.0
+# transformers==4.30.0
+
+# Optional: Audio processing
+# pydub==0.25.1

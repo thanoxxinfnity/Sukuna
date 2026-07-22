@@ -229,6 +229,33 @@
   @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
   .bubble em { color: var(--accent); font-style: normal; font-family: 'Bangers', cursive; letter-spacing: 1px; }
 
+  .bubble-think {
+    margin-bottom: 6px;
+    padding: 6px 10px;
+    background: rgba(179, 32, 44, 0.08);
+    border: 1.5px dashed var(--accent);
+    border-radius: 6px 12px 8px 10px;
+    font-size: 0.9rem;
+    font-style: italic;
+    opacity: 0.75;
+  }
+  .think-toggle {
+    display: inline-block;
+    margin-right: 6px;
+    font-size: 1.1rem;
+    user-select: none;
+  }
+  .think-content {
+    display: none;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: rgba(26, 26, 26, 0.05);
+    border-radius: 4px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
   /* ===== Input bar ===== */
   #inputbar {
     padding: 12px 14px 16px;
@@ -510,7 +537,7 @@
   }
 
   // ---------- rendering ----------
-  function el(role, text, image) {
+  function el(role, text, image, thinking) {
     const row = document.createElement('div');
     row.className = 'row ' + (role === 'user' ? 'user' : 'sukuna');
     const av = document.createElement('div');
@@ -521,6 +548,29 @@
     const who = document.createElement('div');
     who.className = 'who';
     who.textContent = role === 'user' ? 'YOU' : 'SUKUNA ⛩️';
+
+    // thinking bubble (collapsible)
+    if (thinking && role === 'sukuna') {
+      const thinkRow = document.createElement('div');
+      thinkRow.className = 'bubble-think';
+      const thinkToggle = document.createElement('div');
+      thinkToggle.className = 'think-toggle';
+      thinkToggle.textContent = '💭';
+      thinkToggle.style.cursor = 'pointer';
+      const thinkContent = document.createElement('div');
+      thinkContent.className = 'think-content';
+      thinkContent.style.display = 'none';
+      thinkContent.textContent = thinking;
+      let open = false;
+      thinkToggle.addEventListener('click', () => {
+        open = !open;
+        thinkContent.style.display = open ? 'block' : 'none';
+      });
+      thinkRow.appendChild(thinkToggle);
+      thinkRow.appendChild(thinkContent);
+      wrap.appendChild(thinkRow);
+    }
+
     const b = document.createElement('div');
     b.className = 'bubble';
     if (image) {
@@ -637,11 +687,14 @@
   }
 
   // ---------- Groq call ----------
-  async function groqChat(messages, model, stream, onDelta) {
+  async function groqChat(messages, model, stream, onDelta, withThinking) {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + DEFAULT_API_KEY },
-      body: JSON.stringify({ model, messages, stream, temperature: 1.0, max_tokens: 1024 })
+      body: JSON.stringify({
+        model, messages, stream, temperature: 1.0, max_tokens: 1024,
+        ...(withThinking ? { thinking: { type: 'enabled', budget_tokens: 512 } } : {})
+      })
     });
     if (!res.ok) {
       let detail = '';
@@ -650,11 +703,15 @@
     }
     if (!stream) {
       const j = await res.json();
-      return j.choices[0].message.content;
+      const msg = j.choices[0].message;
+      if (withThinking && msg.thinking) {
+        return { thinking: msg.thinking, content: msg.content };
+      }
+      return msg.content;
     }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
-    let full = '', buf = '';
+    let full = '', thinking = '', buf = '';
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -667,11 +724,13 @@
         const data = t.slice(5).trim();
         if (data === '[DONE]') continue;
         try {
-          const delta = JSON.parse(data).choices?.[0]?.delta?.content;
-          if (delta) { full += delta; onDelta(full); }
+          const j = JSON.parse(data).choices?.[0]?.delta;
+          if (j?.thinking) thinking += j.thinking;
+          else if (j?.content) { full += j.content; onDelta(full); }
         } catch {}
       }
     }
+    if (withThinking && thinking) return { thinking, content: full };
     return full;
   }
 
@@ -707,7 +766,7 @@
       const updated = await groqChat([
         { role: 'system', content: 'You maintain a long-term memory file for a roleplay AI. Merge the existing memory with new facts from the conversation. Keep ONLY durable, useful facts: the user\'s name, language, preferences, personal details, running jokes, promises, and key events. Output a compact bullet list, max 20 bullets, no commentary.' },
         { role: 'user', content: 'EXISTING MEMORY:\n' + (memory || '(empty)') + '\n\nNEW CONVERSATION:\n' + recent + '\n\nOutput the updated memory bullets only.' }
-      ], pickTextModel([]) || TEXT_MODEL, false, null);
+      ], pickTextModel([]) || TEXT_MODEL, false, null, false);
       if (updated && updated.trim()) {
         memory = updated.trim();
         localStorage.setItem(LS.memory, memory);
@@ -749,9 +808,10 @@
           : 'Is waqt Groq pe koi text model available nahi hai — thodi der baad try karo.');
         try {
           reply = await groqChat(buildApiMessages(c, !!image), model, true, partial => {
-            setBubbleText(bubble, partial);
+            const txt = typeof partial === 'string' ? partial : (partial.content || '');
+            setBubbleText(bubble, txt, !!image);
             chatEl.scrollTop = chatEl.scrollHeight;
-          });
+          }, true);  // withThinking=true
           break;
         } catch (err) {
           const modelGone = /does not exist|do not have access|not found|decommission|deprecat/i.test(err.message);
@@ -759,15 +819,46 @@
           throw err;
         }
       }
-      const finalText = reply || '*stares in silent contempt* ⛩️';
-      setBubbleText(bubble, finalText);
+
+      let finalText = '*stares in silent contempt* ⛩️';
+      let thinkingText = null;
+      if (reply && typeof reply === 'object' && reply.thinking) {
+        thinkingText = reply.thinking;
+        finalText = reply.content || finalText;
+      } else if (typeof reply === 'string') {
+        finalText = reply;
+      }
+
+      setBubbleText(bubble, finalText, !!image);
+
+      if (thinkingText) {
+        const thinkDiv = document.createElement('div');
+        thinkDiv.className = 'bubble-think';
+        const thinkToggle = document.createElement('div');
+        thinkToggle.className = 'think-toggle';
+        thinkToggle.textContent = '💭';
+        thinkToggle.style.cursor = 'pointer';
+        const thinkContent = document.createElement('div');
+        thinkContent.className = 'think-content';
+        thinkContent.style.display = 'none';
+        thinkContent.textContent = thinkingText;
+        let open = false;
+        thinkToggle.addEventListener('click', () => {
+          open = !open;
+          thinkContent.style.display = open ? 'block' : 'none';
+        });
+        thinkDiv.appendChild(thinkToggle);
+        thinkDiv.appendChild(thinkContent);
+        bubble.parentNode.insertBefore(thinkDiv, bubble);
+      }
+
       c.messages.push({ role: 'assistant', content: finalText });
       c.ts = Date.now();
       saveStore();
       renderConvoList();
       maybeUpdateMemory(); // fire-and-forget
     } catch (e) {
-      setBubbleText(bubble, '⚠️ ' + e.message);
+      setBubbleText(bubble, '⚠️ ' + e.message, !!image);
     }
     busy = false; sendEl.disabled = false;
     msgEl.focus();
