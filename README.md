@@ -22,10 +22,32 @@ Chat with **Ryomen Sukuna** (Jujutsu Kaisen) in a manga-sketch style chat panel 
 
 > Your API key stays in **your** browser only — requests go straight from your browser to Groq.
 
+## Features Breakdown
+
+### Chat Features
+- ⛩️ **Sukuna persona** — unhinged, violent roaster at anger level 10000000000
+- 💬 **Multi-chat history** — sidebar with unlimited conversations, per-chat timestamps
+- 💾 **Permanent history** — saved in localStorage (survives browser close)
+- 🧠 **Long-term memory** — auto-distilled facts injected into system prompt
+- 📷 **Image upload** — send photos, Sukuna analyzes and reacts (uses vision model)
+- 💭 **Thinking bubble** — see Sukuna's reasoning before response (with extended thinking)
+
+### Backend Features (Optional)
+- 🎤 **Text-to-Speech** — Generate Sukuna/Gojo/Megumi/Yuji voices via Hugging Face
+- 🚀 **REST API** — Flask server for TTS, downloadable audio files
+- 🧪 **Test suite** — Comprehensive tests for all features
+
 ## Files
 
 | File | Purpose |
 |---|---|
-| `index.html` | Complete app — UI + Groq client + memory engine |
+| `index.html` | Complete app — UI + Groq/chat logic + memory engine |
 | `knowledge.json` | Sukuna persona & system prompt |
-| `groq.md` | Groq API setup guide + how memory works |
+| `groq.md` | Groq API setup + how memory works |
+| **Backend (Optional)** | |
+| `tts_service.py` | Hugging Face TTS service (character voices) |
+| `tts_server.py` | Flask API server (REST endpoints) |
+| `test_tts.py` | Test suite for TTS |
+| `TTS_SETUP.md` | TTS setup & usage guide |
+| `requirements.txt` | Python dependencies |
+| `.env` | Environment variables (not committed) |

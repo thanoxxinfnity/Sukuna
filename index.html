@@ -264,6 +264,9 @@
     box-shadow: 0 -4px 0 rgba(26,26,26,0.12);
   }
   #inputbar .inner { display: flex; gap: 10px; max-width: 860px; width: 100%; margin: 0 auto; align-items: flex-end; }
+  #ttsBtn { opacity: 0.7; transition: opacity 0.2s; }
+  #ttsBtn:hover { opacity: 1; }
+  #ttsBtn:disabled { opacity: 0.4; cursor: not-allowed; }
   #imgPreview {
     display: none;
     max-width: 860px;
@@ -395,6 +398,7 @@
     <div id="imgPreview"><img alt="preview"><div class="x">✖</div></div>
     <div class="inner">
       <button class="ink-btn" id="attachBtn" title="Send image">📷</button>
+      <button class="ink-btn" id="ttsBtn" title="Generate voice (requires backend)">🎤</button>
       <input type="file" id="fileInput" accept="image/*" hidden>
       <textarea id="msg" rows="1" placeholder="Speak, insect..."></textarea>
       <button id="send">CLEAVE ➤</button>
@@ -426,6 +430,10 @@
   const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
   const MODELS_URL = 'https://api.groq.com/openai/v1/models';
   const DEFAULT_API_KEY = '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';
+  // TTS Backend URL — change for remote deployment
+  const TTS_URL = window.location.hostname === 'localhost'
+    ? 'http://localhost:5000'
+    : 'https://sukuna-tts.onrender.com';
   const RECENT_WINDOW = 20;   // raw messages sent to the model
   const MEMORY_EVERY = 10;    // distill memory every N new messages
 
@@ -649,6 +657,31 @@
   document.getElementById('menuBtn').addEventListener('click', () =>
     sidebarEl.classList.contains('open') ? closeSidebar() : openSidebar());
   backdropEl.addEventListener('click', closeSidebar);
+
+  // ---------- TTS voice generation ----------
+  document.getElementById('ttsBtn').addEventListener('click', async () => {
+    const c = active();
+    const lastSukunaMsg = [...c.messages].reverse().find(m => m.role === 'assistant');
+    if (!lastSukunaMsg) { alert('No Sukuna message to voice yet'); return; }
+    const ttsBtn = document.getElementById('ttsBtn');
+    ttsBtn.disabled = true;
+    try {
+      const r = await fetch(`${TTS_URL}/api/tts/url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: lastSukunaMsg.content, character: 'sukuna', format: 'mp3' })
+      });
+      if (!r.ok) throw new Error(`API error ${r.status}`);
+      const d = await r.json();
+      if (d.audio_url) {
+        const audio = new Audio(d.audio_url);
+        audio.play().catch(e => console.warn('Audio play failed:', e));
+      } else throw new Error(d.message || 'No audio URL');
+    } catch (e) {
+      alert(`Voice generation failed: ${e.message}\n\nMake sure backend is running at ${TTS_URL}`);
+    }
+    ttsBtn.disabled = false;
+  });
 
   // ---------- image handling ----------
   document.getElementById('attachBtn').addEventListener('click', () => fileInput.click());
