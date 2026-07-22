@@ -228,6 +228,27 @@
   .thinking span:nth-child(3) { animation-delay: 0.3s; }
   @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
   .bubble em { color: var(--accent); font-style: normal; font-family: 'Bangers', cursive; letter-spacing: 1px; }
+  .bubble-audio {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    background: rgba(179, 32, 44, 0.12);
+    border-radius: 4px;
+  }
+  .bubble-audio button {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 0 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+  }
+  .bubble-audio button:hover { opacity: 1; }
+  .bubble-audio .playing { animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
   .bubble-think {
     margin-bottom: 6px;
@@ -453,6 +474,7 @@
 
   let memory = localStorage.getItem(LS.memory) || '';
   let pendingImage = null;   // dataURL of image waiting to be sent
+  let currentAudio = null;   // currently playing audio element
   let busy = false;
 
   // ---------- model discovery ----------
@@ -572,7 +594,7 @@
   }
 
   // ---------- rendering ----------
-  function el(role, text, image, thinking) {
+  function el(role, text, image, thinking, audioUrl) {
     const row = document.createElement('div');
     row.className = 'row ' + (role === 'user' ? 'user' : 'sukuna');
     const av = document.createElement('div');
@@ -583,6 +605,38 @@
     const who = document.createElement('div');
     who.className = 'who';
     who.textContent = role === 'user' ? 'YOU' : 'SUKUNA ⛩️';
+
+    // audio controls (for Sukuna messages)
+    if (audioUrl && role === 'sukuna') {
+      const audioDiv = document.createElement('div');
+      audioDiv.className = 'bubble-audio';
+      const playBtn = document.createElement('button');
+      playBtn.textContent = '🔊';
+      playBtn.title = 'Play voice';
+      const audio = new Audio(audioUrl);
+      audio.addEventListener('play', () => playBtn.classList.add('playing'));
+      audio.addEventListener('pause', () => playBtn.classList.remove('playing'));
+      audio.addEventListener('ended', () => playBtn.classList.remove('playing'));
+      playBtn.addEventListener('click', () => {
+        if (currentAudio && currentAudio !== audio) {
+          currentAudio.pause();
+          currentAudio.currentTime = 0;
+        }
+        if (audio.paused) {
+          audio.play().catch(e => console.warn('Audio play failed:', e));
+          currentAudio = audio;
+        } else {
+          audio.pause();
+        }
+      });
+      const label = document.createElement('span');
+      label.textContent = 'Voice';
+      label.style.fontSize = '0.85rem';
+      label.style.opacity = '0.7';
+      audioDiv.appendChild(playBtn);
+      audioDiv.appendChild(label);
+      wrap.appendChild(audioDiv);
+    }
 
     // thinking bubble (collapsible)
     if (thinking && role === 'sukuna') {
@@ -642,7 +696,7 @@
     chatEl.innerHTML = '';
     const c = active();
     if (!c.messages.length) { el('assistant', WELCOME); return; }
-    for (const m of c.messages) el(m.role, m.content, m.image);
+    for (const m of c.messages) el(m.role, m.content, m.image, null, m.audioUrl);
   }
 
   function renderConvoList() {
@@ -688,8 +742,12 @@
   // ---------- TTS voice generation ----------
   document.getElementById('ttsBtn').addEventListener('click', async () => {
     const c = active();
-    const lastSukunaMsg = [...c.messages].reverse().find(m => m.role === 'assistant');
-    if (!lastSukunaMsg) { alert('No Sukuna message to voice yet'); return; }
+    const lastSukunaIdx = c.messages.length - 1 - [...c.messages].reverse().findIndex(m => m.role === 'assistant');
+    const lastSukunaMsg = c.messages[lastSukunaIdx];
+    if (!lastSukunaMsg || lastSukunaMsg.role !== 'assistant') {
+      alert('No Sukuna message to voice yet');
+      return;
+    }
     const ttsBtn = document.getElementById('ttsBtn');
     ttsBtn.disabled = true;
     try {
@@ -701,6 +759,11 @@
       if (!r.ok) throw new Error(`API error ${r.status}`);
       const d = await r.json();
       if (d.audio_url) {
+        // Store audio URL with message
+        lastSukunaMsg.audioUrl = d.audio_url;
+        saveStore();
+        renderChat();
+        // Auto-play
         const audio = new Audio(d.audio_url);
         audio.play().catch(e => console.warn('Audio play failed:', e));
       } else throw new Error(d.message || 'No audio URL');
@@ -861,6 +924,18 @@
       // try models until one works — Groq deprecates/rotates model ids over time
       let reply = null;
       const tried = [];
+      let liveThinking = '';
+      const thinkDiv = document.createElement('div');
+      thinkDiv.className = 'bubble-think';
+      thinkDiv.style.display = 'none';
+      const thinkToggle = document.createElement('div');
+      thinkToggle.className = 'think-toggle';
+      thinkToggle.textContent = '💭';
+      thinkToggle.style.cursor = 'pointer';
+      const thinkContent = document.createElement('div');
+      thinkContent.className = 'think-content';
+      thinkContent.textContent = 'Analyzing...';
+
       for (;;) {
         const model = image ? pickVisionModel(tried) : pickTextModel(tried);
         if (!model) throw new Error(image
@@ -870,6 +945,12 @@
           reply = await groqChat(buildApiMessages(c, !!image), model, true, partial => {
             const txt = typeof partial === 'string' ? partial : (partial.content || '');
             setBubbleText(bubble, txt, !!image);
+            // Show thinking if it's an image (shows analysis)
+            if (image && typeof partial === 'object' && partial.thinking && !liveThinking) {
+              liveThinking = partial.thinking;
+              thinkDiv.style.display = 'block';
+              thinkContent.textContent = liveThinking;
+            }
             chatEl.scrollTop = chatEl.scrollHeight;
           }, true);  // withThinking=true
           break;
@@ -894,25 +975,20 @@
 
       setBubbleText(bubble, finalText, !!image);
 
+      // Add thinking bubble if present
       if (thinkingText) {
-        const thinkDiv = document.createElement('div');
-        thinkDiv.className = 'bubble-think';
-        const thinkToggle = document.createElement('div');
-        thinkToggle.className = 'think-toggle';
-        thinkToggle.textContent = '💭';
-        thinkToggle.style.cursor = 'pointer';
-        const thinkContent = document.createElement('div');
-        thinkContent.className = 'think-content';
-        thinkContent.style.display = 'none';
+        if (!thinkDiv.parentNode) {
+          thinkToggle.addEventListener('click', () => {
+            thinkContent.style.display = thinkContent.style.display === 'none' ? 'block' : 'none';
+          });
+          thinkDiv.appendChild(thinkToggle);
+          thinkDiv.appendChild(thinkContent);
+          bubble.parentNode.insertBefore(thinkDiv, bubble);
+        }
         thinkContent.textContent = thinkingText;
-        let open = false;
-        thinkToggle.addEventListener('click', () => {
-          open = !open;
-          thinkContent.style.display = open ? 'block' : 'none';
-        });
-        thinkDiv.appendChild(thinkToggle);
-        thinkDiv.appendChild(thinkContent);
-        bubble.parentNode.insertBefore(thinkDiv, bubble);
+        thinkDiv.style.display = 'block';
+      } else if (thinkDiv.parentNode) {
+        thinkDiv.style.display = 'none';
       }
 
       c.messages.push({ role: 'assistant', content: finalText });
