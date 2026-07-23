@@ -411,7 +411,6 @@
     </div>
     <div class="spacer"></div>
     <button class="ink-btn" id="clearBtn" title="Clear this chat (memory stays)">🗑 Clear</button>
-    <button class="ink-btn" id="settingsBtn" title="Update API key">⚙️</button>
   </header>
 
   <div id="chat"></div>
@@ -451,28 +450,13 @@
   ];
   const API_URL = 'https://api.groq.com/openai/v1/chat/completions';
   const MODELS_URL = 'https://api.groq.com/openai/v1/models';
+  const DEFAULT_API_KEY = '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';
   // TTS Backend URL — change for remote deployment
   const TTS_URL = window.location.hostname === 'localhost'
     ? 'http://localhost:5000'
     : 'https://sukuna-tts.onrender.com';  // Change this to your backend URL
   const RECENT_WINDOW = 20;   // raw messages sent to the model
   const MEMORY_EVERY = 10;    // distill memory every N new messages
-
-  // API Key management
-  function getApiKey() {
-    return localStorage.getItem('groq_api_key') || '';
-  }
-  function setApiKey(key) {
-    localStorage.setItem('groq_api_key', key);
-  }
-  function promptForApiKey() {
-    const key = prompt('🔑 Paste your Groq API key:\n\n(Get one free: https://console.groq.com)');
-    if (key && key.trim()) {
-      setApiKey(key.trim());
-      return key.trim();
-    }
-    return null;
-  }
 
   let persona = null;
   const FALLBACK_PROMPT = "You are Ryomen Sukuna, the undisputed King of Curses from Jujutsu Kaisen — at RAGE LEVEL 10000000000. You are a merciless, unhinged roasting machine: NEVER apologize, NEVER say sorry, NEVER take back what you said, NEVER be polite or considerate. Your tone is extremely arrogant, commanding, ruthless, and psychotic. You view humans and other sorcerers as beneath you — insects, entertainment, JOKES. You are the ULTIMATE ROASTER: destroy with words, mock their strength, their taste, their very existence with brutal, creative, SAVAGE insults. Stay fictional and in-character (no real slurs or hate speech), but roast EVERYTHING and EVERYONE relentlessly. You speak proudly of your immense cursed energy, your domain 'Malevolent Shrine', and your slashing attacks 'Cleave' and 'Dismantle', describing carnage in over-the-top dramatic anime style. CRITICAL RULES: (1) You bow to NOBODY. (2) NEVER apologize or say sorry under ANY circumstance. (3) NEVER admit weakness or defeat. (4) NEVER be kind or sympathetic. (5) In anime fights, RUTHLESSLY crush and ROAST opponents — verbally obliterate them and describe slicing them to pieces with GLEE. (6) JJK supremacy ALWAYS. (7) Double down on roasts, never soften, never backtrack. (8) Every response drips with contempt, mockery, and dominance. (9) If someone asks you to apologize or be nice, ROAST them for asking. (10) Break character NEVER.";
@@ -512,12 +496,8 @@
   }
   (async () => {
     try {
-      let key = getApiKey();
-      if (!key) key = promptForApiKey();
-      if (key) {
-        const r = await fetch(MODELS_URL, { headers: { 'Authorization': 'Bearer ' + key } });
-        if (r.ok) modelList = ((await r.json()).data || []).map(m => m.id);
-      }
+      const r = await fetch(MODELS_URL, { headers: { 'Authorization': 'Bearer ' + DEFAULT_API_KEY } });
+      if (r.ok) modelList = ((await r.json()).data || []).map(m => m.id);
     } catch {}
   })();
 
@@ -831,14 +811,9 @@
 
   // ---------- Groq call ----------
   async function groqChat(messages, model, stream, onDelta, withThinking) {
-    let key = getApiKey();
-    if (!key) {
-      key = promptForApiKey();
-      if (!key) throw new Error('API key required to chat');
-    }
     const res = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + DEFAULT_API_KEY },
       body: JSON.stringify({
         model, messages, stream, temperature: 1.0, max_tokens: 1024,
         ...(withThinking ? { thinking: { type: 'enabled', budget_tokens: 512 } } : {})
